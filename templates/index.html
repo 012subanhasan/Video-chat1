@@ -1,0 +1,143 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>CHITZO | Video & Chat</title>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.0.1/socket.io.js"></script>
+    <script src="https://ajax.googleapis.com/ajax/libs/jquery/3.5.1/jquery.min.js"></script>
+    <script src="https://unpkg.com/peerjs@1.5.2/dist/peerjs.min.js"></script>
+
+    <style>
+        body { font-family: sans-serif; display: flex; flex-direction: column; height: 100vh; margin: 0; background-color: #f0f2f5; }
+        
+        /* Video Area */
+        #video-grid { display: flex; justify-content: center; gap: 10px; padding: 10px; background: #000; height: 30vh; }
+        video { width: 45%; height: 100%; object-fit: cover; border-radius: 10px; background: #333; }
+        
+        /* Chat Area */
+        #messages { flex: 1; overflow-y: scroll; padding: 20px; list-style: none; display: flex; flex-direction: column; gap: 10px; }
+        .msg { padding: 10px; border-radius: 15px; max-width: 80%; word-wrap: break-word; }
+        .my-msg { align-self: flex-end; background: #6c5ce7; color: white; }
+        .other-msg { align-self: flex-start; background: white; color: black; }
+        
+        /* Controls */
+        #controls { display: flex; padding: 10px; background: white; gap: 10px; border-top: 1px solid #ddd; }
+        input { flex: 1; padding: 10px; border-radius: 20px; border: 1px solid #ddd; }
+        button { padding: 10px 15px; border: none; border-radius: 20px; color: white; font-weight: bold; }
+        #sendBtn { background: #6c5ce7; }
+        #callBtn { background: #00b894; }
+    </style>
+</head>
+<body>
+
+    <div id="video-grid">
+        <video id="myVideo" muted playsinline></video>
+        <video id="userVideo" playsinline></video>
+    </div>
+
+    <ul id="messages"></ul>
+
+    <div id="controls">
+        <button id="callBtn">📞 Video Call</button>
+        <input type="text" id="myMessage" placeholder="Type a message..." autocomplete="off">
+        <button id="sendBtn">Send</button>
+    </div>
+
+    <script>
+        $(document).ready(function() {
+            // --- 1. SETUP SOCKET (Chat) ---
+            var socket = io();
+            var username = prompt("Enter Name:") || "User";
+            var myPeerId = null;
+
+            // --- 2. SETUP PEERJS (Video) ---
+            var peer = new Peer(); // Auto-generates an ID
+            var myStream;
+
+            // Get Camera Access immediately
+            navigator.mediaDevices.getUserMedia({ video: true, audio: true }).then(stream => {
+                myStream = stream;
+                addVideoStream(document.getElementById('myVideo'), stream);
+                
+                // Answer incoming calls
+                peer.on('call', call => {
+                    call.answer(stream); // Answer with my stream
+                    call.on('stream', userVideoStream => {
+                        addVideoStream(document.getElementById('userVideo'), userVideoStream);
+                    });
+                });
+            }).catch(err => {
+                console.error("Failed to get local stream", err);
+                alert("Please allow camera access!");
+            });
+
+            // When I get my ID, save it
+            peer.on('open', id => {
+                myPeerId = id;
+                console.log('My Peer ID is: ' + id);
+            });
+
+            // --- 3. CHAT LOGIC ---
+            socket.on('message', function(msg) {
+                var data = JSON.parse(msg);
+                var isMe = data.user === username;
+                var style = isMe ? 'my-msg' : 'other-msg';
+
+                // Check if it's a "Call Request"
+                if (data.text.startsWith("📞 CALL_ID:")) {
+                    if (!isMe) {
+                        // Show a "Join Call" button for others
+                        var callerId = data.text.split(":")[1];
+                        $('#messages').append(`
+                            <li class="msg other-msg">
+                                <b>${data.user}</b> wants to video chat!<br>
+                                <button onclick="joinCall('${callerId}')" style="background:#00b894; margin-top:5px;">Accept Video</button>
+                            </li>
+                        `);
+                        return;
+                    }
+                }
+
+                $('#messages').append(`<li class="msg ${style}"><b>${isMe?'You':data.user}:</b> ${data.text}</li>`);
+                window.scrollTo(0, document.body.scrollHeight);
+            });
+
+            // Send Text
+            $('#sendBtn').click(sendMessage);
+            function sendMessage() {
+                var txt = $('#myMessage').val();
+                if(txt) {
+                    socket.send(JSON.stringify({user: username, text: txt}));
+                    $('#myMessage').val('');
+                }
+            }
+
+            // --- 4. CALL LOGIC ---
+            // When I click "Video Call", send my ID to chat
+            $('#callBtn').click(function() {
+                if(myPeerId) {
+                    var callMsg = "📞 CALL_ID:" + myPeerId;
+                    socket.send(JSON.stringify({user: username, text: callMsg}));
+                    alert("Calling... Waiting for them to accept.");
+                }
+            });
+
+            // Function to Join a call (called by the button in chat)
+            window.joinCall = function(remoteId) {
+                var call = peer.call(remoteId, myStream);
+                call.on('stream', userVideoStream => {
+                    addVideoStream(document.getElementById('userVideo'), userVideoStream);
+                });
+            };
+
+            function addVideoStream(video, stream) {
+                video.srcObject = stream;
+                video.addEventListener('loadedmetadata', () => {
+                    video.play();
+                });
+            }
+        });
+    </script>
+</body>
+</html>
